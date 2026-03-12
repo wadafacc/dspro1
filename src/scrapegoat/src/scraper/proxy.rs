@@ -3,6 +3,7 @@ use std::{fs::read_to_string, io};
 
 pub struct Proxies {
   proxies: Vec<String>,
+  idx: usize,
 }
 
 impl Proxies {
@@ -10,7 +11,7 @@ impl Proxies {
     let str_in = read_to_string(file)?;
     let proxies = str_in.lines().map(|s| s.to_string()).collect();
 
-    Ok(Proxies { proxies })
+    Ok(Proxies { proxies, idx: 0 })
   }
 
   pub fn get_proxy(&self) -> &String {
@@ -22,6 +23,13 @@ impl Iterator for Proxies {
   type Item = String;
 
   fn next(&mut self) -> Option<Self::Item> {
-    self.proxies.iter().next().cloned()
+    if self.idx >= self.proxies.len() {
+      return None;
+    }
+
+    let item = self.proxies[self.idx].clone();
+    self.idx += 1;
+
+    Some(item)
   }
 }

@@ -27,7 +27,6 @@ impl ScrapeGoat {
   ) -> Result<Self, io::Error> {
     let proxies = Proxies::new(proxy_file)?;
     let user_agents = UserAgents::new(useragents_file)?;
-
     Ok(Self {
       user_agents,
       pool: ClientPool::new(proxies, max_concurrent),
