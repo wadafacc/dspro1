@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://claude.ai/chat/3cb5b537-e49a-4454-a3bf-ec11bce218b1
+HostUrl=https://claude.ai/api/organizations/746c82bd-f255-44d5-afa9-b1a411a20a81/conversations/3cb5b537-e49a-4454-a3bf-ec11bce218b1/wiggle/download-file?path=%2Fmnt%2Fuser-data%2Foutputs%2Fswisstopo_enrich_stepbystep.ipynb

@@ -1,0 +1,14 @@
+step,records
+01_all_listings,9994
+02_address_not_null,9839
+03_area_sqm,9608
+04_rooms,9586
+05_price_cold,9582
+06_population,8897
+07_egid,8896
+08_gbauj,5706
+09_ganzwhg,5092
+10_garea,5089
+11_oev_score,5088
+12_solar_class,4536
+13_elevation,4536
