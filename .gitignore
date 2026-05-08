@@ -1,7 +1,97 @@
-# Testing own stuff
+# =========================
+# Existing entries (preserved)
+# =========================
 src/notebooks/archive/
-
 .env
-
 target/
 .DS_Store
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+.jupyter/
+
+# =========================
+# ML artifacts
+# =========================
+models/*.joblib
+models/*.pkl
+models/*.pickle
+models/*.h5
+models/requirements_used.txt
+**/catboost_info/
+mlruns/
+.mlflow/
+
+# =========================
+# IDE / Editor
+# =========================
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+Thumbs.db
+
+# =========================
+# Testing / Coverage
+# =========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# =========================
+# LaTeX build artefacts (docs/)
+# =========================
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.lot
+*.lof
+
+# =========================
+# OS-specific
+# =========================
+*.Zone.Identifier
+
+# =========================
+# Rust (scrapegoat)
+# =========================
+src/scrapegoat/target/
+**/target/
