@@ -3,77 +3,187 @@
 % --- Packages ---
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
+\usepackage[english]{babel}
 \usepackage{geometry}
-\geometry{margin=0.8in, top=0.5in}
+\geometry{margin=0.7in, top=0.45in, bottom=0.55in}
 \usepackage[table]{xcolor}
 \usepackage{tabularx}
+\usepackage{xltabular}
 \usepackage{titlesec}
-\usepackage{graphicx} % Required for the logo
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{ragged2e}
 
 % --- Custom Definitions ---
 \titleformat{\section}{\large\bfseries\color{blue}}{}{0em}{}
-\renewcommand{\arraystretch}{1.8} 
+\renewcommand{\arraystretch}{1.28}
+\definecolor{boxgray}{HTML}{F5F5F5}
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{outscope}{HTML}{888888}
+
+\newcolumntype{Y}{>{\RaggedRight\arraybackslash}X}
+\setlength{\parindent}{0pt}
+\setlength{\tabcolsep}{5pt}
 
 \begin{document}
 
 % --- Header with Logo and Title ---
-\begin{minipage}{0.7\textwidth}
-    {\huge \bfseries DSPRO1/2 AI Project Canvas} \\[0.2cm]
-    {\large Spring 2026}
+\begin{minipage}{0.68\textwidth}
+    {\huge \bfseries DSPRO1 AI Project Canvas} \\[0.15cm]
+    {\large FS26, Spring 2026}
 \end{minipage}
-\begin{minipage}{0.25\textwidth}
+\begin{minipage}{0.28\textwidth}
     \raggedleft
-    % Ensure your logo file is named 'hslu-logo' or change the name below
-    \includegraphics[width=5cm]{hslu_logo.png} 
+    \includegraphics[width=4.6cm]{hslu_logo.png}
 \end{minipage}
 
-\vspace{0.5cm}
+\vspace{0.25cm}
 \rule{\textwidth}{1pt}
-\vspace{0.5cm}
+\vspace{0.15cm}
 
 \section*{Project Information}
-\begin{tabularx}{\textwidth}{l X}
-    \textbf{Project Name:} & \textcolor{gray}{[Insert your project title here]} \\
-    \textbf{Team Members:} & \textcolor{gray}{[Insert names here]} \\
+\begin{tabularx}{\textwidth}{@{}l Y@{}}
+    \textbf{Project Name:}     & Predicting Apartment Rental Prices in Switzerland Using Machine Learning \\
+    \textbf{Team Members:}     & Elias Martinelli, Timo Schlumpf \quad Team 8 \\
+    \textbf{Supervisor:}       & Elena Nazarenko \\
+    \textbf{Module / Date:}    & DSPRO1 FS26 \quad\textbar\quad Project Proposal: 03.03.2026 \quad\textbar\quad Datasheet: 21.04.2026 \\
+    \textbf{Repository:}       & \texttt{github.com/wadafacc/dspro1} \\
+    \textbf{Dataset:}          & Rentumo Rental Listings Switzerland v1.0, extraction 13.04.2026, 9'994 listings \\
 \end{tabularx}
 
+\vspace{0.15cm}
 \section*{Strategic Planning Tool}
-\begin{table}[h!]
-    \centering
-    \small
-    \begin{tabularx}{\textwidth}{|X|X|}
-        \hline
-        \textbf{Box 1: Problem \& Stakeholders} \newline 
-        \textcolor{red}{\scriptsize Identify the specific user and the decision this AI informs. Define one main outcome rather than vague aspirations[cite: 2360].} & 
-        \textbf{Box 2: Context \& Project Type} \newline 
-        \textcolor{red}{\scriptsize Classify as Research (truth-seeking), Tech Development (usable prototype), or Product work (user value).} \\ \hline
-        
-        \textbf{Box 3: Describe the Data} \newline 
-        \textcolor{red}{\scriptsize Specify source (internal/external), formats (structured/unstructured), and quality dimensions (completeness, accuracy, timeliness).} & 
-        \textbf{Box 4: ML Approach} \newline 
-        \textcolor{red}{\scriptsize Select method family: Supervised (Classification/Regression), Unsupervised (Clustering), RL, or GenAI. Justify why it fits the data[cite: 507].} \\ \hline
-        
-        \textbf{Box 5: ML Pipeline (DSPRO2)} \newline 
-        \textcolor{red}{\scriptsize Map the end-to-end flow: Collection $\rightarrow$ Preparation $\rightarrow$ Model Training $\rightarrow$ Evaluation $\rightarrow$ Deployment.} & 
-        \textbf{Box 6: Success Definition} \newline 
-        \textcolor{red}{\scriptsize Pick one technical task metric (e.g., F1-score, MAE) and one stakeholder KPI (e.g., time saved, revenue).} \\ \hline
-        
-        \textbf{Box 7: Risks \& Guardrails} \newline 
-        \textcolor{red}{\scriptsize Assess risk level (EU AI Act). Address potential bias or privacy issues and define human-in-the-loop oversight.} & 
-        \textbf{Box 8: Infrastructure (DSPRO2)} \newline 
-        \textcolor{red}{\scriptsize Strategy: Cloud (scalability/speed) vs. On-Premises (control/governance). Justify based on workload.} \\ \hline
-        
-        \textbf{Box 9: Costs \& Timeline (DSPRO2)} \newline 
-        \textcolor{red}{\scriptsize Estimate GPU compute, storage, and data labeling costs[cite: 2506]. Provide a rough timeline (e.g., 6--12 months).} & 
-        \textbf{Box 10: Team \& Next Steps (DSPRO2)} \newline 
-        \textcolor{red}{\scriptsize Assign roles (Project Owner, Domain Expert, ML Engineer)[cite: 2395]. Define the first concrete action to begin execution.} \\ \hline
-    \end{tabularx}
-\end{table}
+\vspace{-0.2cm}
 
+{\scriptsize
+\begin{xltabular}{\textwidth}{|Y|Y|}
+    \hline
+
+    \textbf{\color{accent}Box 1: Problem \& Stakeholders} \newline
+    Rental prices in Switzerland vary substantially by location, canton, municipality and neighbourhood. Without suitable market references, it is difficult to judge whether a listing such as ``CHF 2'400 per month, 3 rooms, 80 m$^2$, Zurich'' is priced fairly.
+    \newline\newline
+    \textbf{Primary users:} prospective tenants in Switzerland. \textbf{Secondary users:} landlords and property managers who need a market based price indication. \textbf{Broader context:} housing policy questions, especially around rent transparency.
+    \newline\newline
+    \textbf{Decision supported by the model:} \emph{``Is the advertised cold rent of an apartment plausible compared with similar apartments on the Swiss rental market?''}
+    \newline\newline
+    \textbf{Expected outcome:} a reproducible estimate of the monthly cold rent in CHF, supported by interpretable feature contributions using SHAP and Permutation Importance. The model is intended as decision support and is not legally binding. Tenant screening, creditworthiness assessment and legal rent reviews under Swiss Code of Obligations Art.\ 269 ff. are explicitly excluded. See the Datasheet section \emph{Out of Scope Use}.
+    &
+
+    \textbf{\color{accent}Box 2: Context \& Project Type} \newline
+    \textbf{Project type:} \emph{Tech Development}. The goal is a working prototype consisting of the RentPredictor pipeline and a local Streamlit demo app in \texttt{src/app.py}. The project is therefore not a purely research oriented study.
+    \newline\newline
+    \textbf{In scope for DSPRO1} (see Midterm Slide 8):
+    \newline $\bullet$ Scraping Swiss rental listings and enriching them with GWR and swisstopo data
+    \newline $\bullet$ Cleaning, deduplication and outlier removal in \texttt{final\_records.ipynb}
+    \newline $\bullet$ EDA and feature engineering for location, apartment structure, geo clusters and KNN distance features
+    \newline $\bullet$ Model development from baseline models to linear models, Random Forest, boosting and stacking
+    \newline $\bullet$ Evaluation using MAE, RMSE, R$^2$, bootstrap confidence intervals and statistical model comparison
+    \newline $\bullet$ Extension beyond the initial scope through a Streamlit demo app with address lookup
+    \newline\newline
+    \textbf{Out of scope for DSPRO1} (Midterm Slide 8): cloud deployment, real time price feed, time series forecasting and non apartment properties. The original ``user facing UI'' restriction was relaxed during the project: a local Streamlit demo with address lookup was added as a stretch deliverable, but no production hosting is included.
+    \\ \hline
+
+    \textbf{\color{accent}Box 3: Describe the Data} \newline
+    \textbf{Primary source:} \emph{Rentumo Rental Listings Switzerland v1.0}. The data comes from a one time scrape of rentumo.ch on 13.04.2026 and was stored in PostgreSQL on Neon Console. Relevant tables are \texttt{listings}, \texttt{listing\_details} and \texttt{swisstopo\_details}.
+    \newline\newline
+    \textbf{Data enrichment:}
+    \newline $\bullet$ GWR (BFS) via EGID: construction year (\texttt{year\_built}), extended with \texttt{ganzwhg} and \texttt{garea}
+    \newline $\bullet$ swisstopo / GeoAdmin: \texttt{lv95\_east}, \texttt{lv95\_north}, \texttt{elevation\_m}, \texttt{oev\_score}, \texttt{solar\_class} (SFOE suitability class 1 to 5) and \texttt{population} from the hectare grid
+    \newline\newline
+    \textbf{Excluded source:} \emph{comparis.ch}. According to written feedback, formal authorization would have been required. Access would also have been limited to a maximum of 300 records. The midterm plan still considered comparis.ch as a possible data source, but it was not used for the final dataset.
+    \newline\newline
+    \textbf{Format and size:} structured tabular data.
+    \newline $\bullet$ 25'002 entries were identified on rentumo.ch, of which 9'994 were successfully extracted. The remaining entries were empty placeholders.
+    \newline $\bullet$ After mandatory field filtering and joins, around 4'500 usable rows with 12 features remain in \texttt{model.csv}.
+    \newline\newline
+    \textbf{Target variable:} \texttt{price\_cold}, the monthly cold rent in CHF stored as an integer. No imputation was applied to the target.
+    \newline\newline
+    \textbf{Data quality} (see Datasheet, \emph{Quality Assessment}):
+    \newline $\bullet$ \emph{Completeness:} \texttt{address}, \texttt{price\_cold}, \texttt{area\_sqm} and \texttt{rooms} must be present. Listings with missing mandatory fields or ``price on request'' were removed.
+    \newline $\bullet$ \emph{Accuracy:} plausibility filters were applied at platform level, complemented by an IsolationForest diagnosis in Notebook Chapter 22.9.
+    \newline $\bullet$ \emph{Consistency:} cantons were normalized to ISO 3166 2:CH. The construction year is stored as a four digit integer; missing GWR values were median imputed.
+    \newline $\bullet$ \emph{Timeliness:} snapshot from 13.04.2026 without a temporal component.
+    &
+
+    \textbf{\color{accent}Box 4: ML Approach} \newline
+    \textbf{Method family:} \emph{Supervised Regression}.
+    \newline\newline
+    \textbf{Rationale:} The target is continuous and labelled examples are available for training. The inputs consist of numerical and ordinal tabular features; sequence, image or text models are not required for this use case.
+    \newline\newline
+    \textbf{Hypothesis} (Midterm Slide 6): \emph{``Location related variables combined with structural apartment features contain sufficient signal to predict monthly rental prices in Switzerland with practically useful accuracy, and a Random Forest Regressor will outperform a Linear Regression model in doing so.''}
+    \newline\newline
+    \textbf{Model overview} (same train eval split, Sklearn pipelines):
+    \newline $\bullet$ \emph{DummyRegressor} with mean and median strategy as lower bound. The midterm baseline achieved MAE 612, RMSE 847 and R$^2$ 0.00.
+    \newline $\bullet$ \emph{Ridge / Linear Regression} with \texttt{StandardScaler} as an interpretable benchmark.
+    \newline $\bullet$ \emph{RandomForest} as the model used to test the project hypothesis, complemented by \emph{GradientBoosting}.
+    \newline $\bullet$ \emph{XGBoost} and \emph{LightGBM} with \texttt{RandomizedSearchCV} and \texttt{HalvingRandomSearchCV}.
+    \newline $\bullet$ \emph{StackingRegressor} with a Ridge meta learner over the three strongest tree based models.
+    \newline\newline
+    \textbf{Feature engineering:} \texttt{building\_age}, \texttt{area\_per\_room}, \texttt{land\_area\_per\_apartment}, KMeans geo clusters based on LV95 coordinates and KNN distance features, including the median price of the ten nearest neighbours.
+    \\ \hline
+
+    \textbf{\color{outscope}Box 5: ML Pipeline \emph{DSPRO2}} \newline
+    \textcolor{outscope}{\emph{Not part of the DSPRO1 submission.}}
+    \newline\newline
+    \textcolor{outscope}{\emph{DSPRO2 will define the end to end pipeline in detail: data synchronization, cleaning, feature engineering, model training, evaluation and deployment. Planned artefacts include a \texttt{joblib} model file, Streamlit hosting and MLflow tracking.}}
+    &
+
+    \textbf{\color{accent}Box 6: Success Definition} \newline
+    \textbf{Primary technical metric:} RMSE on the hold out evaluation split. The metric is directly interpretable in CHF.
+    \newline\newline
+    \textbf{Secondary technical metrics} (Proposal + Midterm Slide 19): MAE as a robust error measure, R$^2$ as explained variance. The Notebook extends this set with MedAE (median error), CV RMSE standard deviation for stability, bootstrap 95\% confidence intervals for RMSE and the train versus eval gap as overfitting indicator.
+    \newline\newline
+    \textbf{Stakeholder KPI:} share of predictions within $\pm 10\%$ of the actual rent. This metric is easy for end users to understand.
+    \newline\newline
+    \textbf{Success threshold (Midterm Slide 17):} The mean baseline reaches MAE 612 CHF, RMSE 847 CHF and R$^2$ 0.00. Any serious model must clearly beat these numbers, and generalization must be confirmed through cross validation and a hold out test.
+    \newline\newline
+    \textbf{Current result:} \emph{LightGBM} with \texttt{FEATURES\_ENGINEERED + KNN Distance} reaches an evaluation RMSE of around 393 CHF and an R$^2$ of around 0.75 (\texttt{model\_v3\_clean.ipynb}, Chapter 23.17). This is more than a 50\% RMSE reduction compared with the midterm baseline, and the project hypothesis that Random Forest / boosting outperforms Linear Regression is empirically confirmed (tree based models clearly outperform Ridge on every feature set).
+    \\ \hline
+
+    \textbf{\color{accent}Box 7: Risks \& Guardrails} \newline
+    \textbf{EU AI Act classification:} \emph{minimal / limited risk}. The system provides an advisory rent estimate and does not make an automated decision. The rental or letting decision remains with a human.
+    \newline\newline
+    \textbf{Bias risks and mitigation:}
+    \newline $\bullet$ \emph{Geo coverage:} platform data is likely more urban than the full housing market. Mitigation is addressed through geo clusters and bias analysis by cluster, see Notebook Chapters 21 and 22.14.
+    \newline $\bullet$ \emph{Price band bias:} the rent distribution is right skewed. Expensive apartments above Q3 show roughly twice the MAE, see Notebook Chapter 16.
+    \newline $\bullet$ \emph{Platform bias:} certain housing types may be underrepresented or overrepresented. This limitation is documented in the Datasheet, Chapter 24.5.
+    \newline\newline
+    \textbf{Privacy:} Only public listing data and public register data from GWR and swisstopo are used. No personal data is collected or stored.
+    \newline\newline
+    \textbf{Human in the loop:}
+    \newline $\bullet$ The Streamlit demo displays a clear notice that the estimate is not legally binding.
+    \newline $\bullet$ All model inputs can be manually overwritten.
+    \newline $\bullet$ The Model Card, Chapter 23.15, and the Datasheet for the Dataset, Chapter 24.5, document the use case, out of scope use and limitations.
+    \newline $\bullet$ Drift checks using the KS test and sanity tests, such as positive predictions and the plausibility of area to price relationships, are used to prevent silent failures.
+    &
+
+    \textbf{\color{outscope}Box 8: Infrastructure \emph{DSPRO2}} \newline
+    \textcolor{outscope}{\emph{Not part of the DSPRO1 submission.}}
+    \newline\newline
+    \textcolor{outscope}{\emph{The project currently runs locally with Python 3.12, scikit learn, LightGBM and XGBoost. The database is PostgreSQL on Neon Cloud, the code is managed in GitHub and the demo runs as a local Streamlit app. Cloud deployment and CI will be evaluated in DSPRO2.}}
+    \\ \hline
+
+    \textbf{\color{outscope}Box 9: Costs \& Timeline \emph{DSPRO2}} \newline
+    \textcolor{outscope}{\emph{Not part of the DSPRO1 submission.}}
+    \newline\newline
+    \textcolor{outscope}{\emph{DSPRO1 does not require a GPU; local compute is sufficient. Current running costs are limited to PostgreSQL hosting, currently covered by the Neon Free Tier. For DSPRO2, cloud compute, possible MLflow hosting and a data refresh pipeline will be assessed.}}
+    &
+
+    \textbf{\color{outscope}Box 10: Team \& Next Steps \emph{DSPRO2}} \newline
+    \textcolor{outscope}{\emph{Not part of the DSPRO1 submission.}}
+    \newline\newline
+    \textcolor{outscope}{\emph{Team 8 consists of Elias Martinelli and Timo Schlumpf. Elias is responsible for the ML pipeline, modelling and demo app; Timo is responsible for data acquisition, scraping and the database. The next DSPRO1 step is the final report, including a consolidated model comparison, model card and datasheet.}}
+    \\ \hline
+
+\end{xltabular}
+}
+
+\vspace{0.15cm}
 \section*{Submission Checklist}
 \begin{itemize}
-    \item \textbf{DSPRO1 Submission:} Requires Boxes 1--4, 6, and 7 completed. Focus on project scoping and data provenance.
-    \item \textbf{DSPRO2 Submission:} Full 10-box completion required. Focus on implementation strategy and technical pipeline.
+    \item \textbf{DSPRO1 Submission:} \textcolor{green!50!black}{$\checkmark$} Boxes 1 to 4, 6 and 7 are complete. The focus is on project scoping and data provenance.
+    \item \textbf{DSPRO2 Submission:} Boxes 5, 8, 9 and 10 remain open for the following semester. They will be completed as part of the implementation strategy and technical pipeline.
 \end{itemize}
 
 \end{document}
