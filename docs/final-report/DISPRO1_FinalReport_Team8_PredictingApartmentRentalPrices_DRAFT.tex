@@ -171,8 +171,20 @@ For the Swiss housing market specifically, two public data sources are critical:
 \label{sec:data}
 
 \subsection{Sources and Collection}
-The primary dataset, \emph{Rentumo Rental Listings Switzerland v1.0}, was collected from \texttt{rentumo.ch} in a single scrape on 13 April 2026. The scraper identified 25\,002 entries on the platform, of which 9\,994 listings could be extracted successfully. Many of the remaining pages were empty or non-functional placeholder pages, which appears to be a characteristic of the platform rather than an error in the scraper.
+The primary dataset, \emph{Rentumo Rental Listings Switzerland v1.0}, was collected from \texttt{rentumo.ch} in a single scrape on 13~April 2026. The scraper identified 25\,002 entries on the platform, of which 9\,994 listings could be extracted successfully. Many of the remaining pages were empty or non-functional placeholder pages, which appears to be a characteristic of the platform rather than an error in the scraper.
 
+The scraper is implemented as a custom Rust library, \texttt{ScrapeGoat}, and operates in two sequential phases.
+
+\paragraph{Phase 1 --- Listing index pages.}
+The scraper issues requests to 750 paginated listing pages of the form \texttt{rentumo.ch/mietobjekte?types=apartment\&page=\{1..750\}}. Each page is parsed with CSS selectors targeting the \texttt{\#listings} container, from which per-listing elements yield the number of rooms, the living area in square metres, the cold rent, and a unique URL slug (e.g.\ \texttt{/inserate/<slug>}). Listings for which any of these four fields cannot be parsed are silently dropped at this stage. Successfully extracted records are written to the \texttt{listings} table in the PostgreSQL database with an \texttt{ON CONFLICT (slug) DO NOTHING} guard, making the phase idempotent and safe to re-run.
+
+\paragraph{Phase 2 --- Detail pages.}
+All slugs stored in \texttt{listings} are retrieved from the database and used to construct individual detail URLs (\texttt{rentumo.ch/inserate/<slug>}). Each detail page is parsed to extract additional fields: the full address, the cold rent as confirmed on the detail page, the living area, the number of rooms, the auxiliary costs (\emph{Nebenkosten}), the security deposit (\emph{Kaution}), a free-text description from the JSON-LD \emph{Apartment} schema block, and the earliest available move-in date (\emph{Datum verfügbar}). These are written to a separate \texttt{listing\_details} table with \texttt{ON CONFLICT (listing\_id) DO UPDATE}, allowing the phase to be resumed or repeated without data loss.
+
+\paragraph{Concurrency and politeness.}
+Both phases are managed by a custom task orchestrator (\texttt{Mgt}) that maintains a fixed pool of up to 10 concurrent in-flight HTTP requests. A channel-based feedback loop ensures that a new request is dispatched only when an existing one completes, bounding peak load on the server. Each request carries a randomly sampled \texttt{User-Agent} header drawn from a pre-loaded list, and optional HTTP proxies can be configured via a plain-text file to distribute outbound traffic across multiple IP addresses.
+
+\paragraph{Platform selection.}
 We also considered \texttt{comparis.ch} as a possible data source, but decided not to use it. Comparis confirmed in writing that automated extraction would require formal authorisation and that access would likely be limited to around 300 records, which would not be sufficient for this modelling task. Rentumo was contacted by email before the scrape, but no response was received. The data is used only for the non-commercial academic purpose of the DSPRO1 module.
 
 \subsection{Enrichment}
@@ -202,6 +214,14 @@ The raw and enriched data are stored in a PostgreSQL database on Neon Console. T
     \item \textbf{Timeliness.} The dataset is a single point-in-time snapshot from 13 April 2026. Temporal price changes after that date are not reflected; time-series modelling is explicitly out of scope.
 \end{itemize}
 
+\autofigure
+{price_distribution.png}
+{0.78\linewidth}
+{4.5cm}
+{Histogram of monthly cold rent across the 4'500 modelling-set apartments. A strong right-skew is visible, with a long tail towards expensive apartments.}
+{Distribution of the target variable \texttt{price\_cold}. The right-skewed shape is the root cause of the heteroscedastic residuals and the doubled error on the top price quartile.}
+{fig:price-dist}
+
 \subsection{Legal and Ethical Considerations}
 No personal data is collected. Landlord names and contact details are explicitly excluded by the scraper. Only the address is retained and is used solely for geocoding and building-level enrichment. The project does not process any special-category data defined under the revised Swiss Federal Act on Data Protection (nFADP). The dataset is used exclusively for academic purposes and is not redistributed.
 
@@ -226,6 +246,14 @@ Two further feature groups are created using only \texttt{train\_df}, so that in
     \item \textbf{Geo-clusters.} \texttt{KMeans} on standardised LV95 coordinates produces a discrete \texttt{geo\_cluster} feature (Chapter~21). The number of clusters is tuned on Eval RMSE.
     \item \textbf{KNN-distance features.} For each apartment, the median price of its 10 nearest neighbours in coordinate space (\texttt{knn\_price\_median}) and the corresponding mean (\texttt{knn\_price\_mean}) are added (Chapter~23.12). The nearest-neighbour index is fit on training data only; eval points query against the training index.
 \end{itemize}
+
+\autofigure
+{geo_clusters.png}
+{0.78\linewidth}
+{5cm}
+{Visualisation of the KMeans geo-clusters fitted on \texttt{train\_df} only. Each colour corresponds to one \texttt{geo\_cluster} category that is consumed by the tree models as a discrete feature.}
+{KMeans geo-clusters used as a categorical location feature (Notebook Chapter~21.4). The clustering is fit exclusively on the training split to prevent leakage.}
+{fig:geo-clusters}
 
 \subsection{Models}
 We compare six model families on the same data split. Where necessary, the models are wrapped in an \texttt{sklearn.Pipeline}. The comparison includes a \textbf{DummyRegressor} as a lower bound, a \textbf{Ridge} model with scaling as a simple linear benchmark, and four tree-based approaches: \textbf{RandomForestRegressor}, \textbf{GradientBoostingRegressor}, \textbf{XGBoost} and \textbf{LightGBM}. In Chapter~23.2, we also add a \textbf{StackingRegressor} with a Ridge meta-learner over the strongest tree-based models.
@@ -277,6 +305,14 @@ The best single model according to evaluation RMSE is \emph{LightGBM}, with an R
 \paragraph{Hypothesis test.}
 The project hypothesis was that a tree-based model, in particular Random Forest, would outperform a linear model. The results support this hypothesis clearly. Ridge reaches an evaluation RMSE of 560 CHF, while all tree-based models achieve 425 CHF or better. We therefore accept the hypothesis.
 
+\autofigure
+{bootstrap_ci.png}
+{0.85\linewidth}
+{4.5cm}
+{Forest plot of bootstrap 95\% confidence intervals for evaluation RMSE per model (Notebook Chapter~23.5). Overlapping intervals indicate model differences that are not statistically significant.}
+{Bootstrap confidence intervals for evaluation RMSE per model. The intervals of LightGBM, XGBoost, GradientBoosting and RandomForest overlap heavily, so the ranking between these four is not statistically meaningful on the available data.}
+{fig:bootstrap-ci}
+
 \subsection{Actual vs.\ Predicted and Residuals}
 \begin{figure}[h]
     \centering
@@ -299,6 +335,14 @@ The project hypothesis was that a tree-based model, in particular Random Forest,
 
 The residual diagnostics show that the errors are not normally distributed. The Q-Q plot and Shapiro--Wilk test (Chapter~23.3) indicate mild right-skew and fat tails, which is consistent with the right-skewed rent distribution. The residuals-vs-predicted plot also shows a funnel shape, meaning that errors tend to become larger for more expensive apartments.
 
+\autofigure
+{qq_plot.png}
+{0.78\linewidth}
+{4cm}
+{Q-Q plot of the residuals against a normal reference distribution (Notebook Chapter~23.3). Deviations in the tails confirm the non-normality of the errors.}
+{Q-Q plot of the residuals. Both tails deviate clearly from the diagonal, which means the residual distribution is heavier-tailed than a normal distribution — a typical pattern for right-skewed price data.}
+{fig:qq}
+
 \subsection{Error Analysis by Price Band}
 \begin{table}[h]
 \centering
@@ -319,6 +363,14 @@ medium\_high  & 207 & 221 & 158 & 1\,276 \\
 
 This is one of the most useful findings of the analysis. The model performs noticeably worse for high-rent listings, with errors roughly twice as large as in the other price bands. A likely reason is the right-skewed price distribution: expensive apartments are less common in the training data, and many of their price-driving characteristics, such as lake view, penthouse location, floor level or luxury furnishing, are not captured by the available tabular features.
 
+\autofigure
+{error_by_priceband.png}
+{0.78\linewidth}
+{4cm}
+{Bar plot of the mean absolute error per price quartile, computed on the evaluation set (Notebook Chapter~16). The most expensive quartile stands out with an error roughly twice as large as in the other bands.}
+{Mean absolute error per price quartile. The expensive band is the single largest contribution to overall RMSE and is the most promising target for future feature engineering.}
+{fig:error-band}
+
 \subsection{Feature Importance}
 \autofigure
 {feature_importance_heatmap.png}
@@ -329,6 +381,14 @@ This is one of the most useful findings of the analysis. The model performs noti
 {fig:fi}
 
 The feature-importance results are consistent across the different methods. \emph{Living area} (\texttt{area}), the two \emph{KNN price features}, and the \emph{location coordinates} (\texttt{east}, \texttt{north}) provide most of the predictive signal. One interesting result is that \texttt{rooms} is less important than \texttt{area\_per\_room}, suggesting that the size distribution within the apartment is more informative than the room count alone.
+
+\autofigure
+{pdp_top6.png}
+{0.95\linewidth}
+{5cm}
+{Partial Dependence Plots for the six most important features of the best LightGBM model (Notebook Chapter~23.4). Each panel shows the marginal effect of one feature on the predicted cold rent.}
+{Partial Dependence Plots for the six most important features. Living area shows a strong monotonic effect on price, while \texttt{east} and \texttt{north} encode the location premium of central Switzerland and the major cities.}
+{fig:pdp}
 
 \subsection{Cross-Validation and Stability}
 Five-fold KFold cross-validation with shuffling confirms the ranking observed on the single evaluation split. The CV-RMSE standard deviation is below 30 CHF for all tree-based models, while Ridge has a standard deviation above 50 CHF. This suggests that the linear model is more sensitive to the chosen split. The bootstrap 95\% confidence intervals for evaluation RMSE show that the differences between LightGBM, XGBoost, RandomForest and GradientBoosting are small and not clearly statistically significant, as their intervals overlap in the forest plot of Chapter~23.5.
@@ -366,5 +426,46 @@ This project developed a reproducible regression pipeline for predicting Swiss a
 
 \bibliographystyle{plainnat}
 \bibliography{references}
+
+\appendix
+\newpage
+
+% =========================================================
+\section{Appendix: Exporting the Figures from the Notebook}
+\label{app:export}
+
+All figures used in this report are produced by \texttt{src/notebooks/model\_v3\_clean.ipynb}. They live in \texttt{docs/final-report/fig/}. To regenerate them, run all cells of the notebook once and then execute the export cell at the very end (see Notebook Chapter~26). The export cell uses the in-memory state of the notebook (fitted models, prediction caches, evaluation frames, etc.) and writes one PNG per figure.
+
+\subsection*{Figure Inventory}
+\begin{center}
+\small
+\begin{tabular}{p{5.5cm} p{4cm} p{4cm}}
+\toprule
+File in \texttt{fig/} & Notebook source & Section in report \\
+\midrule
+\texttt{geo\_price\_map.png}              & Ch.~21.2  Geo EDA            & 3.3 Storage \& Schema \\
+\texttt{price\_distribution.png}          & Ch.~3.1  Univariate         & 3.4 Quality Assessment \\
+\texttt{geo\_clusters.png}                & Ch.~21.4  KMeans clusters    & 4.3 Feature Engineering \\
+\texttt{rmse\_train\_eval.png}            & Ch.~11    RMSE Train vs Eval & 5.2 Model Comparison \\
+\texttt{bootstrap\_ci.png}                & Ch.~23.5  Bootstrap CI       & 5.2 Model Comparison \\
+\texttt{actual\_vs\_predicted.png}        & Ch.~14    Actual vs Pred.    & 5.3 Actual vs Predicted \\
+\texttt{residuals.png}                    & Ch.~15    Residual analysis  & 5.3 Actual vs Predicted \\
+\texttt{qq\_plot.png}                     & Ch.~23.3  Q-Q + Heteroscedast.& 5.3 Actual vs Predicted \\
+\texttt{error\_by\_priceband.png}         & Ch.~16    Per-quartile error & 5.4 Price Band Errors \\
+\texttt{pdp\_top6.png}                    & Ch.~23.4  Partial Dependence & 5.5 Feature Importance \\
+\texttt{feature\_importance\_heatmap.png} & Ch.~23.8  Multi-method FI    & 5.5 Feature Importance \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Reproducing the Figures}
+The export cell at the end of the notebook (Chapter~26: \emph{Export figures for Final Report}) re-renders every figure from the available in-memory state and saves it via \texttt{plt.savefig(...)}. The output directory is configured at the top of the cell:
+
+\begin{verbatim}
+FIG_DIR = Path("../../docs/final-report/fig")
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+\end{verbatim}
+
+After execution, the \texttt{fig/} folder is populated and every \verb|\autofigure{...}| call in this report automatically loads the corresponding PNG (the \verb|\IfFileExists| guard inside \verb|\autofigure| keeps the document compilable even when individual figures are missing).
 
 \end{document}
