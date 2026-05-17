@@ -98,7 +98,7 @@
 
 \vfill
 
-{\large DSPRO1 Final Report --- Spring 2026 (FS26)\par}
+{\large DSPRO1 Final Report, Spring 2026 (FS26)\par}
 
 \vspace{0.65cm}
 
@@ -175,10 +175,10 @@ The primary dataset, \emph{Rentumo Rental Listings Switzerland v1.0}, was collec
 
 The scraper is implemented as a custom Rust library, \texttt{ScrapeGoat}, and operates in two sequential phases.
 
-\paragraph{Phase 1 --- Listing index pages.}
+\paragraph{Phase 1: Listing index pages.}
 The scraper issues requests to 750 paginated listing pages of the form \texttt{rentumo.ch/mietobjekte?types=apartment\&page=\{1..750\}}. Each page is parsed with CSS selectors targeting the \texttt{\#listings} container, from which per-listing elements yield the number of rooms, the living area in square metres, the cold rent, and a unique URL slug (e.g.\ \texttt{/inserate/<slug>}). Listings for which any of these four fields cannot be parsed are silently dropped at this stage. Successfully extracted records are written to the \texttt{listings} table in the PostgreSQL database with an \texttt{ON CONFLICT (slug) DO NOTHING} guard, making the phase idempotent and safe to re-run.
 
-\paragraph{Phase 2 --- Detail pages.}
+\paragraph{Phase 2: Detail pages.}
 All slugs stored in \texttt{listings} are retrieved from the database and used to construct individual detail URLs (\texttt{rentumo.ch/inserate/<slug>}). Each detail page is parsed to extract additional fields: the full address, the cold rent as confirmed on the detail page, the living area, the number of rooms, the auxiliary costs (\emph{Nebenkosten}), the security deposit (\emph{Kaution}), a free-text description from the JSON-LD \emph{Apartment} schema block, and the earliest available move-in date (\emph{Datum verfügbar}). These are written to a separate \texttt{listing\_details} table with \texttt{ON CONFLICT (listing\_id) DO UPDATE}, allowing the phase to be resumed or repeated without data loss.
 
 \paragraph{Concurrency and politeness.}
@@ -340,7 +340,7 @@ The residual diagnostics show that the errors are not normally distributed. The 
 {0.78\linewidth}
 {4cm}
 {Q-Q plot of the residuals against a normal reference distribution (Notebook Chapter~23.3). Deviations in the tails confirm the non-normality of the errors.}
-{Q-Q plot of the residuals. Both tails deviate clearly from the diagonal, which means the residual distribution is heavier-tailed than a normal distribution — a typical pattern for right-skewed price data.}
+{Q-Q plot of the residuals. Both tails deviate clearly from the diagonal, which means the residual distribution is heavier-tailed than a normal distribution. This is a typical pattern for right-skewed price data.}
 {fig:qq}
 
 \subsection{Error Analysis by Price Band}
@@ -401,7 +401,7 @@ As a final check, we use a separate 60/20/20 train/validation/test split and ref
 \label{sec:conclusions}
 
 \paragraph{Summary.}
-This project developed a reproducible regression pipeline for predicting Swiss apartment cold rents. The pipeline covers data collection from rentumo.ch, enrichment with GWR and swisstopo data, preprocessing, feature engineering, model training and evaluation. The best final model is a LightGBM model with KNN-distance features. On the evaluation set it reaches RMSE 393 CHF and R$^2$ 0.751, which is more than a 50\% RMSE reduction compared with the mean-prediction baseline of 847 CHF reported at mid-term. The original hypothesis that tree-based models outperform linear regression on this dataset is clearly supported.
+The project produced a reproducible regression pipeline for Swiss apartment cold rents. It starts at the scraper for rentumo.ch, runs through enrichment with GWR and swisstopo data, and ends with feature engineering, model training and a structured evaluation. The strongest model in the comparison is a LightGBM regressor that uses the KNN-distance features. On the evaluation split it reaches an RMSE of 393~CHF and an R$^2$ of 0.751, which improves on the mid-term mean-prediction baseline of 847~CHF by more than half. The original hypothesis, that tree-based models outperform linear regression on this dataset, is therefore clearly supported.
 
 \paragraph{Limitations.}
 \begin{itemize}
@@ -412,12 +412,14 @@ This project developed a reproducible regression pipeline for predicting Swiss a
     \item \textbf{No deployment.} The Streamlit demo runs locally only; production hosting is out of scope for DSPRO1.
 \end{itemize}
 
-\paragraph{Future work (concrete next steps).}
+\paragraph{Future work.}
+A few concrete next steps would have the highest impact:
+
 \begin{enumerate}
-    \item Add text-based features from listing descriptions, for example balcony, parking, renovation year, floor level or view. This is likely the most useful next step, because the current tabular features do not capture many luxury-related attributes.
-    \item Add listings from a second rental platform, such as homegate.ch or immoscout24.ch, to reduce coverage bias and increase the size of the training set.
-    \item Extend the model from point predictions to prediction intervals using \emph{conformal prediction} (MAPIE). This would allow the demo app to display a more realistic estimate such as ``CHF $X \pm Y$''.
-    \item Deploy the demo as a small hosted application, for example on Streamlit Cloud or Render, as a practical first deliverable for DSPRO2.
+    \item Extract text-based features from the listing descriptions. Attributes such as balcony, parking spot, renovation year, floor level or lake view are likely the missing piece for the expensive apartments, since the current tabular fields do not capture them.
+    \item Pull listings from a second rental platform, for example homegate.ch or immoscout24.ch. This would reduce the urban coverage bias and roughly double the training set.
+    \item Replace single-point predictions with prediction intervals using conformal prediction (for example via MAPIE). The demo app could then display estimates as ``CHF $X \pm Y$'' instead of a single number.
+    \item Move the demo from a local Streamlit instance to a small hosted application on Streamlit Cloud or Render. This is a natural first deliverable for DSPRO2.
 \end{enumerate}
 
 % =========================================================
