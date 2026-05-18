@@ -15,9 +15,12 @@ Pipeline-Erweiterung:
 """
 from __future__ import annotations
 
+import datetime as dt
 import math
 import re
 import time
+import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -200,6 +203,12 @@ API_IDENTIFY_URL = "https://api3.geo.admin.ch/rest/services/api/MapServer/identi
 API_HEIGHT_URL   = "https://api3.geo.admin.ch/rest/services/height"
 API_BASE         = "https://api3.geo.admin.ch"
 
+# Offizielle/öffentliche XML-Quellen für EGID-Abfragen.
+# 1) Direkter XML-Download der Housing-Stat EGID-Abfrage
+# 2) Fallback: MADD/eCH-0206 Webservice
+HOUSING_STAT_EGID_XML_URL = "https://www.housing-stat.ch/de/data/query/egid.xml"
+MADD_ECH_API_URL          = "https://madd.bfs.admin.ch/eCH-0206"
+
 IDENTIFY_LAYERS = "all:" + ",".join([
     "ch.are.erreichbarkeit-oev",
     "ch.bfe.solarenergie-eignung-daecher",
@@ -347,25 +356,25 @@ def load_gwr_data(
     egid: Optional[int] = None,
     gwr_link: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """EGID → GWR-Attribute (gbauj, ganzwhg, garea, ...).
+    """EGID → GWR-Gebäudeattribute (gbauj, ganzwhg, garea, ...).
 
-    Aus gwr_egid_db_sync.ipynb (fetch_gwr_feature). Bevorzugt den direkten
-    gwr_link aus lookup_egid (1 API-Call weniger), sonst fallback auf find
-    by EGID.
+    Wichtig: `gbauj` ist das Baujahr des Gebäudes. Es wird bewusst nicht aus
+    `yearOfConstruction` der einzelnen Wohnung überschrieben.
     """
     if not egid and not gwr_link:
         raise ValueError("Weder EGID noch gwr_link angegeben.")
 
     feature = None
 
+    # 1) GeoAdmin-Link aus lookup_egid bevorzugen
     if gwr_link:
         url = gwr_link if gwr_link.startswith("http") else f"{API_BASE}{gwr_link}"
         data = _request_json(url, {"returnGeometry": "false"}, timeout=20)
         if data:
             feature = data.get("feature", data)
 
+    # 2) GeoAdmin Find by EGID
     if feature is None and egid is not None:
-        # Fallback: find by EGID
         data = _request_json(API_FIND_URL, {
             "layer":          "ch.bfs.gebaeude_wohnungs_register",
             "searchText":     str(egid),
@@ -375,13 +384,13 @@ def load_gwr_data(
         if data and data.get("results"):
             feature = data["results"][0]
 
-    if feature is None:
-        raise ValueError(f"GWR-Daten nicht gefunden (egid={egid}).")
+    attrs: Dict[str, Any] = {}
+    if feature is not None:
+        attrs_raw = feature.get("attributes", {}) or {}
+        attrs = {str(k).lower(): v for k, v in attrs_raw.items()}
 
-    attrs_raw = feature.get("attributes", {}) or {}
-    attrs = {str(k).lower(): v for k, v in attrs_raw.items()}
-
-    return {
+    # Werte aus GeoAdmin, falls vorhanden
+    result = {
         "egid":     _safe_int(attrs.get("egid", egid)),
         "gbauj":    _safe_int(attrs.get("gbauj")),
         "gbaup":    _safe_int(attrs.get("gbaup")),
@@ -390,6 +399,39 @@ def load_gwr_data(
         "_attrs":   attrs,
     }
 
+    # 3) Fallback/Ergänzung aus MADD-XML.
+    #    Hier kommt das Baujahr aus building/dateOfConstruction,
+    #    nicht aus dwelling/yearOfConstruction.
+    if egid is not None and (
+        result["gbauj"] is None
+        or result["ganzwhg"] is None
+        or result["garea"] is None
+    ):
+        try:
+            xml_text, madd_debug = _fetch_madd_xml_for_egid(int(egid), timeout=20)
+            if xml_text:
+                building = _parse_building_from_madd_xml(xml_text)
+                if result["egid"] is None:
+                    result["egid"] = _safe_int(building.get("egid"), egid)
+                if result["gbauj"] is None:
+                    result["gbauj"] = _safe_int(building.get("gbauj"))
+                if result["ganzwhg"] is None:
+                    result["ganzwhg"] = _safe_int(building.get("ganzwhg"))
+                if result["garea"] is None:
+                    result["garea"] = _safe_num(building.get("garea"))
+                result["_madd_debug"] = madd_debug
+        except Exception as exc:
+            result["_madd_error"] = f"{type(exc).__name__}: {exc}"
+
+    if (
+        result["gbauj"] is None
+        and result["ganzwhg"] is None
+        and result["garea"] is None
+        and feature is None
+    ):
+        raise ValueError(f"GWR-Daten nicht gefunden (egid={egid}).")
+
+    return result
 
 # GWR-WSTWK Stockwerk-Codes (BFS-Standard)
 WSTWK_CODE_MAP: Dict[int, str] = {
@@ -414,20 +456,26 @@ WSTWK_CODE_MAP: Dict[int, str] = {
 
 
 def parse_gwr_floor(raw_floor: Any) -> Optional[str]:
-    """Heuristisches Parsing der WSTWK-Werte aus GWR.
+    """Heuristisches Parsing der Stockwerk-Codes aus GWR/MADD.
 
-    GWR liefert Stockwerke je nach API entweder als Integer-Code (z. B. 3501),
-    als kleine Ganzzahl (0=EG, 1=1.OG, ...) oder als String ('EG', '2. OG').
-    Wir versuchen alle drei Varianten, ohne zu crashen.
+    MADD/eCH liefert für Wohnungen teilweise Codes wie 3101, 3102, ...
+    Diese werden als 1. Stock, 2. Stock usw. angezeigt.
     """
     if raw_floor is None or raw_floor == "":
         return None
-    if isinstance(raw_floor, str):
-        s = raw_floor.strip()
-        return s or None
-    code = _safe_int(raw_floor)
-    if code is None:
+
+    s = str(raw_floor).strip()
+    if not s:
         return None
+
+    code = _safe_int(s)
+    if code is None:
+        return s
+
+    # Wichtig für MADD XML: 3101, 3102, 3103, ...
+    if 3101 <= code <= 3199:
+        return f"{code - 3100}. Stock"
+
     if code in WSTWK_CODE_MAP:
         return WSTWK_CODE_MAP[code]
     if code == 0:
@@ -436,13 +484,14 @@ def parse_gwr_floor(raw_floor: Any) -> Optional[str]:
         return f"{code}. OG"
     if code < 0:
         return f"{abs(code)}. UG"
-    return str(code)
 
+    return str(code)
 
 APARTMENT_FIELD_KEYS = (
     "ewid", "wstwk", "wflae", "wazim", "wbez", "wstat",
     "stockwerk", "flaeche", "zimmer", "bezeichnung",
     "floor", "area", "rooms", "label",
+    "administrativedwellingno", "noofhabitablerooms", "surfaceareaofdwelling",
 )
 
 
@@ -479,11 +528,11 @@ def _extract_dwelling(d: dict) -> dict:
     floor_raw = pick("wstwk", "stockwerk", "floor")
     return {
         "ewid":        _safe_int(pick("ewid")),
-        "label":       pick("wbez", "bezeichnung", "label"),
+        "label":       pick("wbez", "bezeichnung", "label", "administrativedwellingno"),
         "floor_raw":   floor_raw,
         "floor_label": parse_gwr_floor(floor_raw),
-        "rooms":       _safe_num(pick("wazim", "zimmer", "rooms")),
-        "area":        _safe_num(pick("wflae", "flaeche", "area")),
+        "rooms":       _safe_num(pick("wazim", "zimmer", "rooms", "noofhabitablerooms")),
+        "area":        _safe_num(pick("wflae", "flaeche", "area", "surfaceareaofdwelling")),
     }
 
 
@@ -596,9 +645,265 @@ def _parse_dwellings_from_html(html: str) -> list:
     return out
 
 
+# --------------------------------------------------------------------------
+# MADD / eCH-0206 XML: EGID -> Gebäude + Wohnungen
+# --------------------------------------------------------------------------
+def _xml_local_name(tag: str) -> str:
+    """Entfernt XML-Namespaces: '{namespace}EGID' -> 'EGID'."""
+    return tag.split("}", 1)[-1] if "}" in tag else tag
+
+
+def _xml_direct_child(parent, name: str):
+    """Direktes Kind-Element nach lokalem Namen suchen."""
+    if parent is None:
+        return None
+    name_l = name.lower()
+    for child in list(parent):
+        if _xml_local_name(child.tag).lower() == name_l:
+            return child
+    return None
+
+
+def _xml_first_text(parent, *names: str) -> Optional[str]:
+    """Rekursiv ersten Text für einen lokalen XML-Namen finden."""
+    if parent is None:
+        return None
+    wanted = {n.lower() for n in names}
+    for el in parent.iter():
+        if _xml_local_name(el.tag).lower() in wanted:
+            txt = (el.text or "").strip()
+            if txt:
+                return txt
+    return None
+
+
+def _looks_like_xml(text: str) -> bool:
+    s = (text or "").lstrip()
+    return s.startswith("<?xml") or s.startswith("<maddResponse") or "<maddResponse" in s[:500]
+
+
+def _build_madd_request_xml(egid: int) -> str:
+    """Minimale eCH-0206 maddRequest-Anfrage für EGID/building."""
+    now = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    msg_id = str(uuid.uuid4())
+    return f'''<?xml version="1.0" encoding="UTF-8"?>
+<eCH-0206:maddRequest
+    xmlns:eCH-0206="http://www.ech.ch/xmlns/eCH-0206/2"
+    xmlns:eCH-0058="http://www.ech.ch/xmlns/eCH-0058/5"
+    xmlns:eCH-0129="http://www.ech.ch/xmlns/eCH-0129/5"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <eCH-0206:requestHeader>
+    <eCH-0206:messageId>{msg_id}</eCH-0206:messageId>
+    <eCH-0206:businessReferenceId>{msg_id}</eCH-0206:businessReferenceId>
+    <eCH-0206:requestingApplication>
+      <eCH-0058:manufacturer>HSLU</eCH-0058:manufacturer>
+      <eCH-0058:product>RentPredictorStreamlit</eCH-0058:product>
+      <eCH-0058:productVersion>1.0</eCH-0058:productVersion>
+    </eCH-0206:requestingApplication>
+    <eCH-0206:requestDate>{now}</eCH-0206:requestDate>
+  </eCH-0206:requestHeader>
+  <eCH-0206:requestContext>building</eCH-0206:requestContext>
+  <eCH-0206:requestQuery>
+    <eCH-0206:EGID>{int(egid)}</eCH-0206:EGID>
+  </eCH-0206:requestQuery>
+</eCH-0206:maddRequest>'''
+
+
+def _fetch_madd_xml_for_egid(egid: int, timeout: int = 20) -> tuple[str, Dict[str, Any]]:
+    """Automatischer XML-Abruf für eine EGID.
+
+    Reihenfolge:
+    1. Direkter XML-Download der Housing-Stat EGID-Abfrage.
+    2. Fallback: MADD/eCH-0206 als POST mit XML-Body.
+    3. Fallback: MADD/eCH-0206 als GET mit egid-Parameter.
+    """
+    headers_xml = {
+        "Accept": "application/xml,text/xml,*/*",
+        "User-Agent": "rent-predictor-streamlit/1.0",
+    }
+    attempts: list[Dict[str, Any]] = []
+
+    # 1) Direkter XML-Endpunkt passend zur EGID-Webabfrage
+    try:
+        r = requests.get(
+            HOUSING_STAT_EGID_XML_URL,
+            params={"egid": int(egid)},
+            headers=headers_xml,
+            timeout=timeout,
+        )
+        info = {
+            "method": "GET",
+            "url": r.url,
+            "status": r.status_code,
+            "content_type": r.headers.get("Content-Type"),
+            "text_start": r.text[:160],
+        }
+        attempts.append(info)
+        if r.status_code == 200 and _looks_like_xml(r.text):
+            return r.text, {"success": True, "used": info, "attempts": attempts}
+    except Exception as exc:
+        attempts.append({
+            "method": "GET",
+            "url": HOUSING_STAT_EGID_XML_URL,
+            "exception": f"{type(exc).__name__}: {exc}",
+        })
+
+    # 2) MADD/eCH-0206 POST
+    xml_body = _build_madd_request_xml(egid)
+    try:
+        r = requests.post(
+            MADD_ECH_API_URL,
+            data=xml_body.encode("utf-8"),
+            headers={
+                "Content-Type": "application/xml; charset=utf-8",
+                "Accept": "application/xml,text/xml,*/*",
+                "User-Agent": "rent-predictor-streamlit/1.0",
+            },
+            timeout=timeout,
+        )
+        info = {
+            "method": "POST",
+            "url": r.url,
+            "status": r.status_code,
+            "content_type": r.headers.get("Content-Type"),
+            "text_start": r.text[:160],
+        }
+        attempts.append(info)
+        if r.status_code == 200 and _looks_like_xml(r.text):
+            return r.text, {"success": True, "used": info, "attempts": attempts}
+    except Exception as exc:
+        attempts.append({
+            "method": "POST",
+            "url": MADD_ECH_API_URL,
+            "exception": f"{type(exc).__name__}: {exc}",
+        })
+
+    # 3) MADD/eCH-0206 GET
+    try:
+        r = requests.get(
+            MADD_ECH_API_URL,
+            params={"egid": int(egid)},
+            headers=headers_xml,
+            timeout=timeout,
+        )
+        info = {
+            "method": "GET",
+            "url": r.url,
+            "status": r.status_code,
+            "content_type": r.headers.get("Content-Type"),
+            "text_start": r.text[:160],
+        }
+        attempts.append(info)
+        if r.status_code == 200 and _looks_like_xml(r.text):
+            return r.text, {"success": True, "used": info, "attempts": attempts}
+    except Exception as exc:
+        attempts.append({
+            "method": "GET",
+            "url": MADD_ECH_API_URL,
+            "exception": f"{type(exc).__name__}: {exc}",
+        })
+
+    return "", {"success": False, "attempts": attempts}
+
+
+def _parse_building_from_madd_xml(xml_text: str) -> Dict[str, Any]:
+    """Gebäudeattribute aus MADD XML lesen.
+
+    `gbauj` stammt aus building/dateOfConstruction/dateOfConstruction.
+    `ganzwhg` wird aus der Anzahl dwellingItem gelesen.
+    `garea` entspricht surfaceAreaOfBuilding.
+    """
+    root = ET.fromstring(xml_text)
+
+    dwelling_count = sum(
+        1 for el in root.iter()
+        if _xml_local_name(el.tag) == "dwellingItem"
+    )
+
+    for building_item in root.iter():
+        if _xml_local_name(building_item.tag) != "buildingItem":
+            continue
+
+        building = _xml_direct_child(building_item, "building")
+        if building is None:
+            continue
+
+        date_node = _xml_direct_child(building, "dateOfConstruction")
+
+        return {
+            "egid":     _safe_int(_xml_first_text(building_item, "EGID")),
+            "gbauj":    _safe_int(_xml_first_text(date_node, "dateOfConstruction")),
+            "gbaup":    _safe_int(_xml_first_text(date_node, "periodOfConstruction")),
+            "ganzwhg":  dwelling_count or None,
+            "garea":    _safe_num(_xml_first_text(building, "surfaceAreaOfBuilding")),
+            "building_status":   _safe_int(_xml_first_text(building, "buildingStatus")),
+            "building_category": _safe_int(_xml_first_text(building, "buildingCategory")),
+            "building_class":    _safe_int(_xml_first_text(building, "buildingClass")),
+            "number_of_floors":  _safe_int(_xml_first_text(building, "numberOfFloors")),
+        }
+
+    return {
+        "egid":     None,
+        "gbauj":    None,
+        "gbaup":    None,
+        "ganzwhg":  dwelling_count or None,
+        "garea":    None,
+    }
+
+
+def _parse_dwellings_from_madd_xml(xml_text: str) -> list:
+    """Wohnungen aus MADD/eCH-0206 XML parsen.
+
+    Das Wohnungs-Baujahr wird bewusst als `year_built_dwelling` geführt und
+    nicht als Modell-Baujahr verwendet. Für das Modell bleibt `gbauj`
+    aus dem Gebäude massgebend.
+    """
+    out: list = []
+    seen: set = set()
+
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return out
+
+    for item in root.iter():
+        if _xml_local_name(item.tag) != "dwellingItem":
+            continue
+
+        ewid = _safe_int(_xml_first_text(item, "EWID"))
+        admin_no = _xml_first_text(item, "administrativeDwellingNo")
+        floor_raw = _xml_first_text(item, "floor")
+
+        d = {
+            "ewid":                ewid,
+            "label":               admin_no,
+            "floor_raw":           _safe_int(floor_raw, floor_raw),
+            "floor_label":         parse_gwr_floor(floor_raw),
+            "rooms":               _safe_num(_xml_first_text(item, "noOfHabitableRooms")),
+            "area":                _safe_num(_xml_first_text(item, "surfaceAreaOfDwelling")),
+            "year_built_dwelling": _safe_int(_xml_first_text(item, "yearOfConstruction")),
+            "kitchen":             _safe_int(_xml_first_text(item, "kitchen")),
+            "dwelling_status":     _safe_int(_xml_first_text(item, "dwellingStatus")),
+        }
+
+        key = ("ewid", ewid) if ewid else (
+            "tup", d.get("floor_label"), d.get("rooms"),
+            d.get("area"), d.get("label"),
+        )
+        if key not in seen:
+            seen.add(key)
+            out.append(d)
+
+    return out
+
+
 @st.cache_data(show_spinner=False)
 def load_gwr_dwellings_with_debug(egid: int) -> tuple:
-    """EGID → (list, debug_info).  debug_info hilft bei API-Fehleranalyse."""
+    """EGID → (Wohnungsliste, Debug-Info).
+
+    Primär wird automatisch die XML/API-Antwort von Housing-Stat/MADD gelesen.
+    Die alten GeoAdmin-Varianten bleiben nur als Fallback drin.
+    """
     debug: Dict[str, Any] = {"egid": egid, "attempts": []}
     if not egid:
         return [], debug
@@ -606,46 +911,41 @@ def load_gwr_dwellings_with_debug(egid: int) -> tuple:
     seen: set = set()
     out: list = []
 
+    # === 1. MADD / Housing-Stat XML: echte Wohnungsdetails ===
+    try:
+        xml_text, madd_debug = _fetch_madd_xml_for_egid(int(egid), timeout=20)
+        attempt = {
+            "source": "housing-stat / MADD XML",
+            "success": bool(xml_text),
+            **madd_debug,
+        }
+        if xml_text:
+            parsed = _parse_dwellings_from_madd_xml(xml_text)
+            attempt["xml_len"] = len(xml_text)
+            attempt["dwellings_parsed"] = len(parsed)
+
+            for d in parsed:
+                ewid = d.get("ewid")
+                key = ("ewid", ewid) if ewid else (
+                    "tup", d.get("floor_label"), d.get("rooms"),
+                    d.get("area"), d.get("label"),
+                )
+                if key not in seen:
+                    seen.add(key)
+                    out.append(d)
+        debug["attempts"].append(attempt)
+    except Exception as exc:
+        debug["attempts"].append({
+            "source": "housing-stat / MADD XML",
+            "exception": f"{type(exc).__name__}: {exc}",
+        })
+
     headers = {
         "Accept": "application/json",
         "User-Agent": "rent-predictor-streamlit/1.0",
     }
 
-    # === 1. housing-stat.ch (mehrere Pfad-Varianten) ===
-    candidate_urls = [
-        f"https://www.housing-stat.ch/api/v1/gwr/egid/{int(egid)}",
-        f"https://www.housing-stat.ch/api/v1/gwr/egid/{int(egid)}/wohnungen",
-        f"https://www.housing-stat.ch/api/v1/gwr/egids/{int(egid)}/wohnungen",
-    ]
-    for url in candidate_urls:
-        attempt: Dict[str, Any] = {"source": "housing-stat.ch", "url": url}
-        try:
-            r = requests.get(url, headers=headers, timeout=20)
-            attempt["status"] = r.status_code
-            if r.status_code == 200:
-                try:
-                    data = r.json()
-                except Exception as e:
-                    attempt["json_error"] = str(e)
-                    debug["attempts"].append(attempt)
-                    continue
-                attempt["top_type"] = type(data).__name__
-                if isinstance(data, dict):
-                    attempt["top_keys"] = list(data.keys())[:20]
-                elif isinstance(data, list):
-                    attempt["top_len"] = len(data)
-                before = len(out)
-                out.extend(_walk_dwellings(data, seen))
-                attempt["dwellings_found"] = len(out) - before
-            else:
-                attempt["http_error"] = r.status_code
-        except requests.exceptions.RequestException as e:
-            attempt["exception"] = f"{type(e).__name__}: {e}"
-        debug["attempts"].append(attempt)
-        if out:
-            break
-
-    # === 2. GeoAdmin Feature-Endpoint (Wohnungen oft in Sub-Attributen) ===
+    # === 2. GeoAdmin Feature-Endpoint (Fallback) ===
     if not out:
         feat_url = (
             f"https://api3.geo.admin.ch/rest/services/ech/MapServer/"
@@ -670,7 +970,7 @@ def load_gwr_dwellings_with_debug(egid: int) -> tuple:
             attempt["exception"] = f"{type(e).__name__}: {e}"
         debug["attempts"].append(attempt)
 
-    # === 3. GeoAdmin htmlPopup (HTML-Tabelle der Wohnungen) ===
+    # === 3. GeoAdmin htmlPopup (Fallback) ===
     if not out:
         for popup_kind in ("extendedHtmlPopup", "htmlPopup"):
             popup_url = (
@@ -691,7 +991,6 @@ def load_gwr_dwellings_with_debug(egid: int) -> tuple:
                     parsed = _parse_dwellings_from_html(r.text)
                     attempt["html_len"] = len(r.text)
                     attempt["dwellings_parsed"] = len(parsed)
-                    # Dedup gegen seen-Set
                     for d in parsed:
                         ewid = d.get("ewid")
                         key = ("ewid", ewid) if ewid else (
@@ -707,7 +1006,7 @@ def load_gwr_dwellings_with_debug(egid: int) -> tuple:
             if out:
                 break
 
-    # === 4. Letzter Versuch: GeoAdmin Find ===
+    # === 4. GeoAdmin Find (letzter Fallback) ===
     if not out:
         attempt = {"source": "geo.admin.ch find", "egid": egid}
         try:
@@ -729,18 +1028,37 @@ def load_gwr_dwellings_with_debug(egid: int) -> tuple:
             attempt["exception"] = f"{type(e).__name__}: {e}"
         debug["attempts"].append(attempt)
 
-    # Sortierung: Stockwerk-Code/Label, dann EWID
+    # Sortierung: EWID zuerst, sonst Stockwerk/Label
     def _sort_key(d):
+        ewid = d.get("ewid")
+        if ewid is not None:
+            return (0, ewid)
         fr = d.get("floor_raw")
         if isinstance(fr, (int, float)):
-            return (0, fr, d.get("ewid") or 0)
+            return (1, fr)
         if isinstance(fr, str) and fr.strip():
-            return (1, fr, d.get("ewid") or 0)
-        return (2, "", d.get("ewid") or 0)
-    out.sort(key=_sort_key)
+            return (2, fr)
+        return (3, "")
 
+    out.sort(key=_sort_key)
     debug["total_dwellings"] = len(out)
     return out, debug
+def make_manual_entry_dwelling(area_default: float = 75.0,
+                                 rooms_default: float = 3.0) -> dict:
+    """Letzter Fallback: ein einziger generischer Eintrag für manuelle Eingabe.
+
+    Wird verwendet, wenn weder die GWR-API noch die Synthese aus ganzwhg
+    Wohnungen liefern. Damit hat das Dropdown immer mindestens einen Eintrag
+    und der Nutzer kann Fläche / Zimmer / Stockwerk frei eingeben.
+    """
+    return {
+        "ewid":        None,
+        "label":       "Manuelle Eingabe (keine GWR-Daten verfügbar)",
+        "floor_raw":   None,
+        "floor_label": None,
+        "rooms":       rooms_default,
+        "area":        area_default,
+    }
 
 
 def synthesize_dwellings_from_building(gwr_building: Dict[str, Any]) -> list:
@@ -748,7 +1066,7 @@ def synthesize_dwellings_from_building(gwr_building: Dict[str, Any]) -> list:
 
     Wenn keine echte API Wohnungen liefert, generieren wir N generische Einträge,
     bei denen `area` der Gebäude-Durchschnitt ist (`garea / ganzwhg`).
-    Stockwerk und Zimmer bleiben offen — der Nutzer trägt sie manuell nach.
+    Stockwerk und Zimmer bleiben offen, der Nutzer trägt sie manuell nach.
     """
     if not gwr_building:
         return []
@@ -1166,6 +1484,13 @@ if search_clicked:
                 except Exception as exc:
                     debug_info["synthesize_error"] = f"{type(exc).__name__}: {exc}"
 
+            # Letzter Fallback: garantiere mindestens einen Eintrag,
+            # damit die UI nicht in einen leeren-Zustand kippt.
+            if not dwellings and egid_info.get("egid"):
+                dwellings = [make_manual_entry_dwelling()]
+                st.session_state.lookup_dwellings_synthesized = True
+                debug_info["fallback_manual_entry"] = True
+
         st.session_state.lookup_egid_info       = egid_info
         st.session_state.lookup_dwellings       = dwellings
         st.session_state.lookup_dwellings_debug = debug_info
@@ -1194,23 +1519,42 @@ if egid_info_state is not None:
         f"✅ Gefunden: **{egid_info_state['address']}**  ·  "
         f"EGID `{egid_info_state.get('egid', '—')}`  ·  "
     )
+    is_manual_only = (
+        is_synth and n_dw == 1
+        and dwellings_state and dwellings_state[0].get("label", "").startswith("Manuelle Eingabe")
+    )
     if n_dw > 0 and not is_synth:
         msg += f"**{n_dw} Wohnung(en)** im Gebäude verfügbar"
+    elif is_manual_only:
+        msg += "**1 Standard-Eintrag** (Manuelle Werte unten anpassen)"
     elif n_dw > 0 and is_synth:
         msg += f"**{n_dw} Wohnung(en) (aus GWR-Total geschätzt)**"
     elif egid_info_state.get("egid"):
-        msg += "Wohnungs-Liste leer — Werte manuell eingeben"
+        msg += "Wohnungs-Liste leer, Werte manuell eingeben"
     else:
-        msg += "Keine EGID gefunden — Werte manuell eingeben"
+        msg += "Keine EGID gefunden, Werte manuell eingeben"
     st.success(msg)
 
     if is_synth and n_dw > 0:
-        st.info(
-            f"ℹ️ Die GWR-Wohnungs-API liefert für diese EGID keine Detaildaten. "
-            f"Wir zeigen **{n_dw} Standard-Einträge** mit Durchschnittsfläche aus "
-            f"`garea / ganzwhg`. Du kannst Wohnfläche, Zimmer und Stockwerk pro "
-            f"Wohnung manuell anpassen."
+        is_manual_only = (
+            n_dw == 1
+            and dwellings_state[0].get("label", "").startswith("Manuelle Eingabe")
         )
+        if is_manual_only:
+            st.info(
+                "ℹ️ Die GWR-API liefert für diese EGID weder Wohnungs-Detaildaten "
+                "noch eine Wohnungs-Gesamtzahl. Du bekommst einen Standard-Eintrag "
+                "mit Default-Werten (75 m² / 3 Zimmer). Trage die korrekten Werte "
+                "der Wohnung unten manuell ein. Die Vorhersage funktioniert "
+                "trotzdem, weil sie auf der Adresse und den Geo-Daten basiert."
+            )
+        else:
+            st.info(
+                f"ℹ️ Die GWR-Wohnungs-API liefert für diese EGID keine Detaildaten. "
+                f"Wir zeigen **{n_dw} Standard-Einträge** mit Durchschnittsfläche aus "
+                f"`garea / ganzwhg`. Du kannst Wohnfläche, Zimmer und Stockwerk pro "
+                f"Wohnung manuell anpassen."
+            )
 
     # ---------- Wohnungs-Dropdown (nur wenn welche da sind) ----------
     if n_dw > 0:
@@ -1367,7 +1711,7 @@ if egid_info_state is not None:
         with st.expander(f"🏘️ Alle {n_dw} Wohnungen im Gebäude"):
             dw_df = pd.DataFrame(dwellings_state)
             display_cols = [c for c in
-                            ["ewid", "label", "floor_label", "rooms", "area"]
+                            ["ewid", "label", "floor_label", "rooms", "area", "year_built_dwelling"]
                             if c in dw_df.columns]
             st.dataframe(
                 dw_df[display_cols].rename(columns={
@@ -1376,6 +1720,7 @@ if egid_info_state is not None:
                     "floor_label": "Stockwerk",
                     "rooms":       "Zimmer",
                     "area":        "Fläche (m²)",
+                    "year_built_dwelling": "Wohnungs-Baujahr",
                 }),
                 use_container_width=True,
             )
